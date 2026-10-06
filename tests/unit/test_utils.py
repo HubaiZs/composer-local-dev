@@ -381,3 +381,16 @@ def test_restart_docker_client(mock_sleep, mock_from_env):
     mock_old_client.close.assert_called_once()
     mock_new_client.ping.assert_called()
     assert returned_client is mock_new_client
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("127.0.0.1", True),
+        ("::1", True),
+        ("localhost", False),
+        (None, False),
+    ],
+)
+def test_is_ip_address(value, expected):
+    assert utils.is_ip_address(value) is expected

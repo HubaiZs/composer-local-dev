@@ -513,6 +513,43 @@ class TestEnvironment:
         else:
             assert expected_env.db_port == test_db_port
 
+    @staticmethod
+    def write_config(tmp_path, **extra):
+        config = {
+            "composer_image_version": "composer-2.17.3-airflow-2.11.1",
+            "composer_location": "location",
+            "composer_project_id": "",
+            "dags_path": "",
+            "plugins_path": "",
+            "dag_dir_list_interval": 10,
+            "port": 9000,
+            "database_engine": "postgresql",
+            **extra,
+        }
+        with open(tmp_path / "config.json", "w") as file:
+            json.dump(config, file)
+
+    @pytest.mark.parametrize(
+        "extra, expected_bind_address",
+        [
+            ({}, constants.DEFAULT_BIND_ADDRESS),
+            ({"bind_address": "0.0.0.0"}, "0.0.0.0"),
+        ],
+    )
+    def test_bind_address_from_config(
+        self, tmp_path, extra, expected_bind_address
+    ):
+        self.write_config(tmp_path, **extra)
+        config = environment.EnvironmentConfig(tmp_path, None, None)
+        assert config.bind_address == expected_bind_address
+
+    def test_invalid_bind_address_in_config(self, tmp_path):
+        self.write_config(tmp_path, bind_address="localhost")
+        with pytest.raises(
+            errors.InvalidConfigurationError, match="bind_address"
+        ):
+            environment.EnvironmentConfig(tmp_path, None, None)
+
     @pytest.mark.parametrize(
         "pypi_packages",
         [
@@ -759,7 +796,7 @@ class TestEnvironment:
         mocked_resolve_gcloud_config_path.return_value = mock.Mock()
         default_env.create_docker_container()
         ports = {
-            f"8080/tcp": default_env.port,
+            f"8080/tcp": (constants.DEFAULT_BIND_ADDRESS, default_env.port),
         }
         environment = {
             "AIRFLOW__API__AUTH_BACKEND": "airflow.api.auth.backend.default",
@@ -825,7 +862,7 @@ class TestEnvironment:
         default_env.container_cpu_count = custom_cpu_count
         default_env.create_docker_container()
         ports = {
-            f"8080/tcp": default_env.port,
+            f"8080/tcp": (constants.DEFAULT_BIND_ADDRESS, default_env.port),
         }
         environment = {
             "AIRFLOW__API__AUTH_BACKEND": "airflow.api.auth.backend.default",
@@ -887,7 +924,7 @@ class TestEnvironment:
         mocked_resolve_gcloud_config_path.return_value = mock.Mock()
         default_env_postgresql.create_db_docker_container()
         ports = {
-            f"5432/tcp": 25432,
+            f"5432/tcp": (constants.DEFAULT_BIND_ADDRESS, 25432),
         }
         environment = {
             "PGDATA": "/var/lib/postgresql/data/pgdata",
@@ -905,6 +942,40 @@ class TestEnvironment:
             mem_limit=constants.DOCKER_CONTAINER_MEMORY_LIMIT,
             detach=True,
         )
+
+    @mock.patch("composer_local_dev.environment.docker.from_env")
+    @mock.patch("composer_local_dev.utils.resolve_gcloud_config_path")
+    @mock.patch("composer_local_dev.utils.resolve_kube_config_path")
+    @mock.patch("composer_local_dev.environment.get_image_mounts")
+    def test_create_docker_containers_with_bind_address(
+        self,
+        mocked_mounts,
+        mocked_resolve_kube_config_path,
+        mocked_resolve_gcloud_config_path,
+        mocked_docker,
+        tmp_path,
+    ):
+        env = environment.Environment(
+            env_dir_path=tmp_path / ".compose" / "my_env",
+            project_id="",
+            image_version="composer-2.0.8-airflow-2.2.3",
+            location="location",
+            dags_path=str(tmp_path),
+            port=8081,
+            db_port=25433,
+            bind_address="0.0.0.0",
+        )
+        create = env.docker_client.containers.create
+
+        env.create_docker_container()
+        assert create.call_args.kwargs["ports"] == {
+            "8080/tcp": ("0.0.0.0", 8081)
+        }
+
+        env.create_db_docker_container()
+        assert create.call_args.kwargs["ports"] == {
+            "5432/tcp": ("0.0.0.0", 25433)
+        }
 
     @pytest.mark.parametrize(
         "container_exists, create_container", [(False, True), (True, False)]

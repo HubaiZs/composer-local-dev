@@ -418,6 +418,13 @@ class EnvironmentConfig:
             else:
                 self.db_port = constants.DEFAULT_DB_PORT
 
+        # Backwards compatibility: don't fail on missing bind_address
+        self.bind_address = self.config.get(
+            "bind_address", constants.DEFAULT_BIND_ADDRESS
+        )
+        if not utils.is_ip_address(self.bind_address):
+            raise errors.FailedToParseConfigBindAddressError(self.bind_address)
+
         self.database_engine = self.get_str_param("database_engine")
         self.editable_dependencies = self.config.get(
             "editable_dependencies", []
@@ -504,6 +511,7 @@ class Environment:
         cpu_count: Optional[int] = None,
         port: Optional[int] = None,
         db_port: Optional[int] = None,
+        bind_address: Optional[str] = None,
         pypi_packages: Optional[Dict] = None,
         environment_vars: Optional[Dict] = None,
         editable_dependencies: Optional[List[str]] = None,
@@ -540,6 +548,11 @@ class Environment:
         self.port: int = port if port is not None else 8080
         self.db_port: int = (
             db_port if db_port is not None else constants.DEFAULT_DB_PORT
+        )
+        self.bind_address: str = (
+            bind_address
+            if bind_address is not None
+            else constants.DEFAULT_BIND_ADDRESS
         )
 
         self.pypi_packages = (
@@ -625,6 +638,7 @@ class Environment:
             dag_dir_list_interval=config.dag_dir_list_interval,
             port=config.port,
             db_port=config.db_port,
+            bind_address=config.bind_address,
             database_engine=config.database_engine,
             memory_limit=config.memory_limit,
             cpu_count=config.cpu_count,
@@ -650,6 +664,7 @@ class Environment:
         plugins_path: Optional[str],
         database_engine: str,
         data_path: Optional[str] = None,
+        bind_address: Optional[str] = None,
         memory_limit: Optional[str] = None,
         cpu_count: Optional[int] = None,
         editable_dependencies: Optional[List[str]] = None,
@@ -679,6 +694,7 @@ class Environment:
             dag_dir_list_interval=10,
             port=web_server_port,
             db_port=db_port,
+            bind_address=bind_address,
             pypi_packages=pypi_packages,
             environment_vars=env_variables,
             database_engine=database_engine,
@@ -801,6 +817,7 @@ class Environment:
             "dag_dir_list_interval": int(self.dag_dir_list_interval),
             "port": int(self.port),
             "db_port": int(self.db_port),
+            "bind_address": self.bind_address,
             "database_engine": self.database_engine,
             "memory_limit": self.container_memory_limit,
             "cpu_count": self.container_cpu_count,
@@ -856,7 +873,7 @@ class Environment:
                     "AIRFLOW__DATABASE__SQL_ALCHEMY_CONN": f"postgresql+psycopg2://postgres:airflow@{self.db_container_name}:5432/airflow",
                 },
                 "ports": {
-                    f"5432/tcp": self.db_port,
+                    f"5432/tcp": (self.bind_address, self.db_port),
                 },
             },
         }
@@ -916,7 +933,7 @@ class Environment:
             )
 
         ports = {
-            f"8080/tcp": self.port,
+            f"8080/tcp": (self.bind_address, self.port),
         }
         entrypoint = f"bash {constants.ENTRYPOINT_PATH}"
         memory_limit = (
